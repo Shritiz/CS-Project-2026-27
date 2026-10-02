@@ -8,6 +8,9 @@ Schema = """
 CREATE TABLE IF NOT EXISTS tournaments (
     Toid INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
+    sport TEXT NOT NULL,
+    format TEXT NOT NULL,
+    status TEXT CHECK(status IN ('Scheduled', 'Ongoing', 'Completed')) NOT NULL DEFAULT 'Scheduled',
     Sdate DATE,
     Edate DATE
 );
