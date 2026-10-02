@@ -144,3 +144,30 @@ def lst_M(conn: sqlite3.Connection, Toid: int,status: str):
 
 def gen_round_robin():
     pass # take a crack at it when i know what it is 
+
+def rec_r(conn: sqlite3.Connection, Mid: int, t1_score, t2_score): #record the results isn't that obv
+    Mid = isRequired(conn, Mid, "Match ID")
+    try:
+        Mid = int(Mid)
+    except (TypeError, ValueError):
+        raise ValidationError("Match ID must be a Whole number.")
+    if Mid <= 0:
+        raise ValidationError("Match ID must be a positive Whole number.")
+    cursor = conn.execute("SELECT * FROM matches WHERE Mid = ?", (Mid,))
+    match = cursor.fetchone()
+    if match is None:
+        raise ValidationError(f"Match with ID {Mid} not found.")
+    if match['Status'] == 'Completed':
+        raise ValidationError(f"Match with ID {Mid} had been concluded .")
+    t1_score = isRequired(conn, t1_score, "Team 1 Score")
+    t2_score = isRequired(conn, t2_score, "Team 2 Score")
+    if t1_score < 0 or t2_score < 0:
+        raise ValidationError("Scores must be non-negative integers.")
+    The_winner = None if t1_score== t2_score else match['Teid1'] if t1_score > t2_score else match['Teid2']
+    with conn:
+        conn.execute("INSERT INTO results (Mid, t1_score, t2_score, The_winner) VALUES (?, ?, ?, ?)", (Mid, t1_score, t2_score, The_winner),)
+        conn.execute("UPDATE matches SET Status = 'Completed' WHERE Mid = ?", (Mid,))
+
+def standings(conn: sqlite3.Connection, Toid: int):
+    pass #come to it tmr lol
+

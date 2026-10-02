@@ -60,8 +60,15 @@ CREATE INDEX IF NOT EXISTS idx_TO_id ON matches (Toid, status);
 """
 
 def main():
-    pass
-    #manager = DatabaseManager("tournament.db")
+    try:
+        manager = DatabaseManager("tournament.db")
+    except sqlite3.Error as e:
+        print(f"Database error: {e}")
+    except (EOFError, KeyboardInterrupt):
+        print("Application interrupted.")
+    finally:
+        manager.close()  # close the database for a safer self
+    
 
 if __name__ == "__main__":
     main()
