@@ -169,5 +169,12 @@ def rec_r(conn: sqlite3.Connection, Mid: int, t1_score, t2_score): #record the r
         conn.execute("UPDATE matches SET Status = 'Completed' WHERE Mid = ?", (Mid,))
 
 def standings(conn: sqlite3.Connection, Toid: int):
-    pass #come to it tmr lol
+    Tour = get_To(conn, Toid)
+    tems = lst_Te(conn, Tour["Toid"])
+    tubla = {
+        tem["Teid"]: {
+
+        }
+        for tem in tems
+    }
 
