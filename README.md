@@ -6,6 +6,176 @@
 
 ---
 
+## 0. Quick start: install and run
+
+Follow these steps from a terminal. The commands below are written for Linux/macOS. Windows commands are included where activation differs.
+
+### Step 1: Install Git
+
+Check whether Git is already installed:
+
+```bash
+git --version
+```
+
+If that command is not found, install Git using the instructions for your operating system:
+
+```text
+Ubuntu/Debian:  sudo apt update && sudo apt install git
+macOS:         Install Git from https://git-scm.com/downloads
+Windows:       Install Git from https://git-scm.com/download/win
+```
+
+After installation, verify it again:
+
+```bash
+git --version
+```
+
+### Step 2: Install Python
+
+This project requires Python 3.10 or newer. Check your version:
+
+```bash
+python3 --version
+```
+
+On Windows, use:
+
+```powershell
+python --version
+```
+
+If Python is not installed, download it from:
+
+```text
+https://www.python.org/downloads/
+```
+
+On Windows, enable **Add Python to PATH** during installation.
+
+### Step 3: Clone the Git repository
+
+Copy the repository to your computer:
+
+```bash
+git clone https://github.com/Shritiz/CS-Project-2026-27.git
+```
+
+Move into the project directory:
+
+```bash
+cd CS-Project-2026-27
+```
+
+Confirm that the main files are present:
+
+```bash
+ls
+```
+
+You should see files such as `Program.py`, `README.md`, `requirements.txt`, `Modules`, and `tournament.db`.
+
+### Step 4: Create a Python virtual environment
+
+A virtual environment keeps this project's Python setup separate from the rest of your computer.
+
+Linux/macOS:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+Windows PowerShell:
+
+```powershell
+python -m venv .venv
+.venv\\Scripts\\Activate.ps1
+```
+
+Windows Command Prompt:
+
+```bat
+python -m venv .venv
+.venv\\Scripts\\activate.bat
+```
+
+When the environment is active, your terminal usually shows `(.venv)` at the beginning of the prompt.
+
+### Step 5: Install the requirements
+
+Upgrade `pip`, then install the project's dependencies:
+
+Linux/macOS:
+
+```bash
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+Windows:
+
+```powershell
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+This project currently uses only Python's standard library, including `sqlite3`, `argparse`, and `typing`. Therefore, `requirements.txt` intentionally contains no third-party packages; running the command above is still part of the standard setup so future dependencies can be added consistently.
+
+### Step 6: Run the program
+
+Make sure the virtual environment is still active and that your terminal is inside the project directory:
+
+```bash
+python3 Program.py
+```
+
+On Windows:
+
+```powershell
+python Program.py
+```
+
+The application opens an interactive menu:
+
+```text
+1. List tournaments        2. Create tournament
+3. Register team           4. Register player
+5. List teams/players      6. Generate round-robin fixtures
+7. List matches             8. Enter match result
+9. View standings          10. Search
+11. Statistics             0. Exit
+```
+
+Choose an option by typing its number and pressing Enter. Type `0` to exit.
+
+### Step 7: Deactivate the environment when finished
+
+```bash
+deactivate
+```
+
+### Important database note
+
+The repository includes `tournament.db`, which contains the current sample and simulated tournament data. Running the program from the project directory opens that database. Operations such as creating tournaments, adding teams, adding players, and recording results permanently change it.
+
+Before experimenting, make a backup:
+
+```bash
+cp tournament.db tournament.db.backup
+```
+
+On Windows PowerShell:
+
+```powershell
+Copy-Item tournament.db tournament.db.backup
+```
+
+If the program says that the database is empty or creates a new database unexpectedly, check that you are running it from inside `CS-Project-2026-27`.
+
+---
+
 ## 1. What the project does
 
 This is a Python command-line tournament management system backed by SQLite. It supports:

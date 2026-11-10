@@ -1,6 +1,4 @@
-import argparse
 import sqlite3
-import sys
 from typing import Any
 from Modules.functions import *
 
