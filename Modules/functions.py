@@ -7,9 +7,11 @@ class ValidationError(Exception): #Custom Error
     pass
 def init_database(schema, database_path: str): #connect database to the program
     conn = sqlite3.connect(database_path)
+    conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     cursor.executescript(schema)
     conn.commit()
+    return conn
 
 def close_database(conn: sqlite3.Connection): #close the databse when done
     if conn:
@@ -46,7 +48,7 @@ def Create_To(conn: sqlite3.Connection, name: str,sport: str,format:str, status:
     return int(cursoe.lastrowid)
 
 
-def get_To(conn: sqlite3.connection, Toid): #getting To data based on Toid
+def get_To(conn: sqlite3.Connection, Toid): #getting To data based on Toid
     Toid = isRequired(conn, Toid, "Tournament ID")
     try:
         Toid = int(Toid)
@@ -66,7 +68,7 @@ def add_Te(conn: sqlite3.Connection, name:str, Toid: int): #New team here add
     try:
         cursor = conn.execute(
             "INSERT INTO teams (name, Toid) VALUES (?, ?)",
-            (Tour["Toid"], Toid)
+            (name, Tour["Toid"])
         )
         conn.commit()
     except sqlite3.IntegrityError as e:
@@ -130,12 +132,18 @@ def lst_P(conn: sqlite3.Connection, Teid: int, Toid: int):
 
 def lst_M(conn: sqlite3.Connection, Toid: int,status: str): #list matches
     Tour = get_To(conn, Toid)
-    qry = "SELECT m.*, a.name AS t1_name, b.name AS t2_name, r.t1_score, r.t2_score FROM matches m JOIN teams a ON a.Teid = m.t1_id JOIN teams b ON b.Teid = m.t2_id JOIN results r ON r.match_id = m.match_id WHERE m.Toid = ?"
+    qry = """SELECT m.*, a.name AS team1_name, b.name AS team2_name,
+                     r.Teid1_score, r.Teid2_score
+              FROM matches m
+              JOIN teams a ON a.Teid = m.Teid1
+              JOIN teams b ON b.Teid = m.Teid2
+              LEFT JOIN results r ON r.Mid = m.Mid
+              WHERE m.Toid = ?"""
     parm = [Tour["Toid"]]
     if status:
         if status not in {"Scheduled", "Completed", "Cancelled"}:
             raise ValidationError("Invalid status. Must be 'Scheduled', 'Completed', or 'Cancelled'.")
-        qry += " AND m.status = ?"
+        qry += " AND m.Status = ?"
         parm.append(status)
     qry += " ORDER BY m.Mdate, m.Mtime"
     cursor = conn.execute(qry, parm)
@@ -182,11 +190,18 @@ def rec_r(conn: sqlite3.Connection, Mid: int, t1_score, t2_score): #record the r
         raise ValidationError(f"Match with ID {Mid} had been concluded .")
     t1_score = isRequired(conn, t1_score, "Team 1 Score")
     t2_score = isRequired(conn, t2_score, "Team 2 Score")
+    try:
+        t1_score = int(t1_score)
+        t2_score = int(t2_score)
+    except (TypeError, ValueError) as exc:
+        raise ValidationError("Scores must be whole numbers.") from exc
     if t1_score < 0 or t2_score < 0:
         raise ValidationError("Scores must be non-negative integers.")
-    The_winner = None if t1_score== t2_score else match['Teid1'] if t1_score > t2_score else match['Teid2']
     with conn:
-        conn.execute("INSERT INTO results (Mid, t1_score, t2_score, The_winner) VALUES (?, ?, ?, ?)", (Mid, t1_score, t2_score, The_winner),)
+        conn.execute(
+            "INSERT INTO results (Mid, Teid1_score, Teid2_score) VALUES (?, ?, ?)",
+            (Mid, t1_score, t2_score),
+        )
         conn.execute("UPDATE matches SET Status = 'Completed' WHERE Mid = ?", (Mid,))
 
 def standings(conn: sqlite3.Connection, Toid: int):
