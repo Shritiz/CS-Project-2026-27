@@ -142,8 +142,40 @@ def lst_M(conn: sqlite3.Connection, Toid: int,status: str):
     return cursor.fetchall()
 
 
-def gen_round_robin():
-    pass # take a crack at it when i know what it is 
+def gen_round_robin(conn: sqlite3.Connection, Toid: int):
+    """Generate one fixture for every pair of teams in a tournament."""
+    Tour = get_To(conn, Toid)
+    teams = lst_Te(conn, Tour["Toid"])
+    if len(teams) < 2:
+        raise ValidationError("At least two teams are required to generate fixtures.")
+
+    existing = conn.execute(
+        "SELECT 1 FROM matches WHERE Toid = ? LIMIT 1", (Tour["Toid"],)
+    ).fetchone()
+    if existing is not None:
+        raise ValidationError("Fixtures already exist for this tournament.")
+
+    participants = list(teams)
+    if len(participants) % 2:
+        participants.append(None)
+
+    created = []
+    for round_number in range(1, len(participants)):
+        for index in range(len(participants) // 2):
+            first = participants[index]
+            second = participants[-index - 1]
+            if first is not None and second is not None:
+                cursor = conn.execute(
+                    """INSERT INTO matches
+                       (Toid, Teid1, Teid2, Mdate, Mtime, Venue, Status)
+                       VALUES (?, ?, ?, DATE('now'), TIME('now'), NULL, 'Scheduled')""",
+                    (Tour["Toid"], first["Teid"], second["Teid"]),
+                )
+                created.append(int(cursor.lastrowid))
+        participants = [participants[0]] + [participants[-1]] + participants[1:-1]
+
+    conn.commit()
+    return created
 
 def rec_r(conn: sqlite3.Connection, Mid: int, t1_score, t2_score): #record the results isn't that obv
     Mid = isRequired(conn, Mid, "Match ID")
@@ -169,12 +201,62 @@ def rec_r(conn: sqlite3.Connection, Mid: int, t1_score, t2_score): #record the r
         conn.execute("UPDATE matches SET Status = 'Completed' WHERE Mid = ?", (Mid,))
 
 def standings(conn: sqlite3.Connection, Toid: int):
+    """Calculate standings from all completed matches in a tournament."""
     Tour = get_To(conn, Toid)
-    tems = lst_Te(conn, Tour["Toid"])
-    tubla = {
-        tem["Teid"]: {
-
+    teams = lst_Te(conn, Tour["Toid"])
+    table = {
+        team["Teid"]: {
+            "Teid": team["Teid"],
+            "team": team["name"],
+            "played": 0,
+            "wins": 0,
+            "draws": 0,
+            "losses": 0,
+            "for": 0,
+            "against": 0,
+            "points": 0,
         }
-        for tem in tems
+        for team in teams
     }
+
+    matches = conn.execute(
+        """SELECT m.Teid1, m.Teid2, r.Teid1_score, r.Teid2_score
+           FROM matches m JOIN results r ON r.Mid = m.Mid
+           WHERE m.Toid = ?""",
+        (Tour["Toid"],),
+    ).fetchall()
+
+    for match in matches:
+        first = table[match["Teid1"]]
+        second = table[match["Teid2"]]
+        score1 = match["Teid1_score"]
+        score2 = match["Teid2_score"]
+        first["played"] += 1
+        second["played"] += 1
+        first["for"] += score1
+        first["against"] += score2
+        second["for"] += score2
+        second["against"] += score1
+
+        if score1 == score2:
+            first["draws"] += 1
+            second["draws"] += 1
+            first["points"] += 1
+            second["points"] += 1
+        elif score1 > score2:
+            first["wins"] += 1
+            second["losses"] += 1
+            first["points"] += 3
+        else:
+            second["wins"] += 1
+            first["losses"] += 1
+            second["points"] += 3
+
+    for row in table.values():
+        row["difference"] = row["for"] - row["against"]
+
+    return sorted(
+        table.values(),
+        key=lambda row: (-row["points"], -row["difference"], -row["for"], row["team"].lower()),
+    )
 
