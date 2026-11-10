@@ -24,18 +24,18 @@ def isRequired(conn: sqlite3.Connection, value: str, label: str): #check if the 
     if not val:
         raise ValidationError(f"{label} is required.")
     return val
-def Create_To(conn: sqlite3.Connection, name: str,sport: str,format:str, status: str, Sdate: str, Edate: str): #Creating a tournament 
+def Create_To(conn: sqlite3.Connection, name: str,sport: str,format:str, status: str, Sdate: str, Edate: str): #Creating a tournament
     name = isRequired(conn, name, "Tournament Name")
     sport = isRequired(conn, sport, "Sport")
     format = isRequired(conn, format, "Format")
     if status not in ['Scheduled', 'Ongoing', 'Completed']:
         raise ValidationError("Invalid status. Must be 'Scheduled', 'Ongoing', or 'Completed'.")
-    
+
     Sdate = Sdate if Sdate else None
     Edate = Edate if Edate else None
     try:
         cursoe = conn.execute(
-            
+
             "INSERT INTO tournaments (name, sport, format, status, Sdate, Edate) VALUES (?, ?, ?, ?, ?, ?)",
             (name, sport, format, status, Sdate, Edate)
         )
@@ -109,7 +109,7 @@ def lst_Te(conn: sqlite3.Connection, Toid: int):
     return cursor.fetchall()
 
 def lst_P(conn: sqlite3.Connection, Teid: int, Toid: int):
-    qry = "SELECT p.*, t.name AS Tname, t.Toid FROM players p JOIN teams t ON t.Teid = p.Teid" 
+    qry = "SELECT p.*, t.name AS Tname, t.Toid FROM players p JOIN teams t ON t.Teid = p.Teid"
     parm = []
     if Teid is not None:
         qry += " WHERE p.Teid = ?"
@@ -128,7 +128,7 @@ def lst_P(conn: sqlite3.Connection, Teid: int, Toid: int):
     cursor = conn.execute(qry, parm)
     return cursor.fetchall()
 
-def lst_M(conn: sqlite3.Connection, Toid: int,status: str):
+def lst_M(conn: sqlite3.Connection, Toid: int,status: str): #list matches
     Tour = get_To(conn, Toid)
     qry = "SELECT m.*, a.name AS t1_name, b.name AS t2_name, r.t1_score, r.t2_score FROM matches m JOIN teams a ON a.Teid = m.t1_id JOIN teams b ON b.Teid = m.t2_id JOIN results r ON r.match_id = m.match_id WHERE m.Toid = ?"
     parm = [Tour["Toid"]]
@@ -142,40 +142,29 @@ def lst_M(conn: sqlite3.Connection, Toid: int,status: str):
     return cursor.fetchall()
 
 
-def gen_round_robin(conn: sqlite3.Connection, Toid: int):
-    """Generate one fixture for every pair of teams in a tournament."""
-    Tour = get_To(conn, Toid)
-    teams = lst_Te(conn, Tour["Toid"])
+def gen_round_robin(conn: sqlite3.Connection, Toid: int): #default fixture
+    teams = lst_Te(conn, Toid)
+
     if len(teams) < 2:
-        raise ValidationError("At least two teams are required to generate fixtures.")
+        raise ValidationError("At least two teams are required.")
 
+    # Check if fixtures already exist
     existing = conn.execute(
-        "SELECT 1 FROM matches WHERE Toid = ? LIMIT 1", (Tour["Toid"],)
+        "SELECT 1 FROM matches WHERE Toid = ?", (Toid,)
     ).fetchone()
-    if existing is not None:
-        raise ValidationError("Fixtures already exist for this tournament.")
 
-    participants = list(teams)
-    if len(participants) % 2:
-        participants.append(None)
+    if existing:
+        raise ValidationError("Fixtures already exist.")
 
-    created = []
-    for round_number in range(1, len(participants)):
-        for index in range(len(participants) // 2):
-            first = participants[index]
-            second = participants[-index - 1]
-            if first is not None and second is not None:
-                cursor = conn.execute(
-                    """INSERT INTO matches
-                       (Toid, Teid1, Teid2, Mdate, Mtime, Venue, Status)
-                       VALUES (?, ?, ?, DATE('now'), TIME('now'), NULL, 'Scheduled')""",
-                    (Tour["Toid"], first["Teid"], second["Teid"]),
-                )
-                created.append(int(cursor.lastrowid))
-        participants = [participants[0]] + [participants[-1]] + participants[1:-1]
+    # Generate matches
+    for i in range(len(teams)):
+        for j in range(i + 1, len(teams)):
+            conn.execute("""
+                INSERT INTO matches (Toid, Teid1, Teid2, Mdate, Mtime, Status)
+                VALUES (?, ?, ?, DATE('now'), TIME('now'), 'Scheduled')
+            """, (Toid, teams[i]["Teid"], teams[j]["Teid"]))
 
     conn.commit()
-    return created
 
 def rec_r(conn: sqlite3.Connection, Mid: int, t1_score, t2_score): #record the results isn't that obv
     Mid = isRequired(conn, Mid, "Match ID")
@@ -201,9 +190,8 @@ def rec_r(conn: sqlite3.Connection, Mid: int, t1_score, t2_score): #record the r
         conn.execute("UPDATE matches SET Status = 'Completed' WHERE Mid = ?", (Mid,))
 
 def standings(conn: sqlite3.Connection, Toid: int):
-    """Calculate standings from all completed matches in a tournament."""
     Tour = get_To(conn, Toid)
-    teams = lst_Te(conn, Tour["Toid"])
+    tems = lst_Te(conn, Tour["Toid"])
     table = {
         team["Teid"]: {
             "Teid": team["Teid"],
@@ -216,7 +204,7 @@ def standings(conn: sqlite3.Connection, Toid: int):
             "against": 0,
             "points": 0,
         }
-        for team in teams
+        for team in tems
     }
 
     matches = conn.execute(
@@ -255,8 +243,115 @@ def standings(conn: sqlite3.Connection, Toid: int):
     for row in table.values():
         row["difference"] = row["for"] - row["against"]
 
-    return sorted(
-        table.values(),
-        key=lambda row: (-row["points"], -row["difference"], -row["for"], row["team"].lower()),
+    def sort_key(r):
+        return (-r["points"], -r["difference"], -r["for"], r["team"].lower())
+
+    return sorted(table.values(), key=sort_key)
+
+
+def search(conn: sqlite3.Connection, term: str, Toid=None): #search diff values in the database
+    term = isRequired(conn, term, "Search term")
+    pattern = f"%{term}%"
+    team_parameters = [pattern]
+    player_parameters = [pattern, pattern]
+    To_clause = ""
+
+    if Toid is not None: #if is given or no, then add the appropriate filter
+        Tour = get_To(conn, Toid)
+        To_clause = " AND t.Toid = ?"
+        team_parameters.append(Tour["Toid"])
+        player_parameters.append(Tour["Toid"])
+
+    teams = conn.execute(
+        """SELECT t.name, t.Toid, u.name AS tournament_name
+           FROM teams t JOIN tournaments u ON u.Toid = t.Toid
+           WHERE t.name LIKE ?""" + To_clause,
+        team_parameters,
+    ).fetchall()
+    players = conn.execute(
+        """SELECT p.name, t.name AS team_name, t.Toid,
+                  u.name AS tournament_name
+           FROM players p JOIN teams t ON t.Teid = p.Teid
+           JOIN tournaments u ON u.Toid = t.Toid
+           WHERE (p.name LIKE ? OR t.name LIKE ?)""" + To_clause,
+        player_parameters,
+    ).fetchall()
+    return {"teams": teams, "players": players} #return dictornary of players and tms
+
+
+def statistics(conn: sqlite3.Connection, Toid: int): #return the dictonary of player data
+    Tour = get_To(conn, Toid)
+    tournament_id = Tour["Toid"]
+    row = conn.execute(
+        """SELECT
+           (SELECT COUNT(*) FROM teams WHERE Toid = ?) AS teams,
+           (SELECT COUNT(*) FROM players p JOIN teams t ON t.Teid = p.Teid
+             WHERE t.Toid = ?) AS players,
+           (SELECT COUNT(*) FROM matches WHERE Toid = ?) AS matches,
+           (SELECT COUNT(*) FROM matches WHERE Toid = ? AND Status = 'Completed') AS completed,
+           (SELECT COUNT(*) FROM matches WHERE Toid = ? AND Status = 'Scheduled') AS upcoming,
+           COALESCE((SELECT SUM(r.Teid1_score + r.Teid2_score)
+             FROM results r JOIN matches m ON m.Mid = r.Mid
+             WHERE m.Toid = ?), 0) AS total_score""",
+        [tournament_id] * 6,
+    ).fetchone()
+    return dict(row)
+
+
+def print_rows(rows, columns):
+    """Print database rows using a list of (column name, heading) pairs."""
+    rows = list(rows)
+    if not rows:
+        print("No records found.")
+        return
+    headings = " | ".join(title for _, title in columns)
+    print("\\n" + headings)
+    print("-" * (len(headings) + 2))
+    for row in rows:
+        print(" | ".join(
+            str(row[key]) if row[key] is not None else "-"
+            for key, _ in columns
+        ))
+
+
+def choose_tournament(conn): #display selected tournmant row
+    tournaments = lst_To(conn)
+    print_rows(
+        tournaments,
+        [("Toid", "ID"), ("name", "Name"), ("sport", "Sport"), ("status", "Status")],
     )
+    if not tournaments:
+        return None
+    try:
+        return get_To(conn, input("Tournament ID: "))
+    except ValidationError as exc:
+        print(f"Error: {exc}")
+        return None
+
+
+def prompt_int(label: str, default=None): #Idiot proof the code lol
+    while True:
+        value = input(f"{label}" + (f" [{default}]" if default is not None else "") + ": ").strip()
+        if not value and default is not None:
+            return default
+        try:
+            return int(value)
+        except ValueError:
+            print("Please enter a whole number.")
+
+
+def create_tournament_cli(conn): #adding TO esily, helpful function
+    try:
+        tournament_id = Create_To(
+            conn,
+            input("Tournament name: "),
+            input("Sport: "),
+            input("Format [Round Robin]: ").strip() or "Round Robin",
+            input("Status [Scheduled]: ").strip() or "Scheduled",
+            input("Start date (YYYY-MM-DD, optional): ").strip() or None,
+            input("End date (YYYY-MM-DD, optional): ").strip() or None,
+        )
+        print(f"Tournament created with ID {tournament_id}.")
+    except ValidationError as exc:
+        print(f"Error: {exc}")
 
