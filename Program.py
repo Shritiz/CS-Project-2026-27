@@ -93,9 +93,25 @@ def generate_fixtures(conn, tournament_id, start_date, start_time, venue=None):
     participants = list(teams)
 
     # Add a bye for an odd number of teams
-    if len(participants) % 2:
-        participants.append(None)
-
+    last_match_date = start_at.date() + timedelta(
+        days=len(participants) - 2
+    )
+    if tournament["Sdate"]:
+        tournament_start = datetime.strptime(
+            tournament["Sdate"], "%Y-%m-%d"
+        ).date()
+        if start_at.date() < tournament_start:
+            raise ValidationError(
+                "Fixtures cannot start before the tournament start date."
+            )
+    if tournament["Edate"]:
+        tournament_end = datetime.strptime(
+            tournament["Edate"], "%Y-%m-%d"
+        ).date()
+        if last_match_date > tournament_end:
+            raise ValidationError(
+                "Fixtures extend beyond the tournament end date."
+            )   
     created = []
 
     with conn:

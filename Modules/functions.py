@@ -1,25 +1,32 @@
 from re import match
 import sqlite3
 from pathlib import Path
+from datetime import datetime
 
 
 class ValidationError(Exception): #Custom Error
     pass
-def init_database(schema, database_path: str): #connect database to the program
-    conn = sqlite3.connect(database_path)
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    cursor.executescript(schema)
+
+def init_database(schema, database_path: str):#initialise database with code 
+    conn = get_connection(database_path)
+    conn.executescript(schema)
     conn.commit()
+
     return conn
 
 def close_database(conn: sqlite3.Connection): #close the databse when done
     if conn:
         conn.close()
 
+
 def get_connection(database_path: str):
+    """Create and configure a database connection."""
     conn = sqlite3.connect(database_path)
+    # Enable foreign key constraints
+    conn.execute("PRAGMA foreign_keys = ON")
+    # Enable column access by name
+    conn.row_factory = sqlite3.Row
+
     return conn
 
 def isRequired(conn: sqlite3.Connection, value: str, label: str): #check if the value is present which cannot be empty
@@ -41,8 +48,13 @@ def Create_To(conn: sqlite3.Connection, name: str,sport: str,format:str, status:
     if status not in ['Scheduled', 'Ongoing', 'Completed']:
         raise ValidationError("Invalid status. Must be 'Scheduled', 'Ongoing', or 'Completed'.")
 
-    Sdate = Sdate if Sdate else None
-    Edate = Edate if Edate else None
+    Sdate = validate_optional_date(Sdate, "Start date")
+    Edate = validate_optional_date(Edate, "End date")
+
+    if Sdate and Edate and Sdate > Edate:
+        raise ValidationError(
+            "End date cannot be earlier than start date."
+        )
     try:
         cursoe = conn.execute(
 
@@ -83,6 +95,20 @@ def add_Te(conn: sqlite3.Connection, name:str, Toid: int): #New team here add
         conn.rollback()
         raise ValidationError(f"{e}: Team with same name alredy exist") from e
     return int(cursor.lastrowid)
+
+def validate_optional_date(value, label):
+    if value is None or not str(value).strip():
+        return None
+    try:
+        parsed = datetime.strptime(
+            str(value).strip(),
+            "%Y-%m-%d"
+        )
+        return parsed.date().isoformat()
+    except ValueError as exc:
+        raise ValidationError(
+            f"{label} must be in YYYY-MM-DD format."
+        ) from exc
 
 def add_P(conn: sqlite3.Connection, name:str, Teid: int): #New player add here
     Teid = isRequired(conn, Teid, "Team ID")
