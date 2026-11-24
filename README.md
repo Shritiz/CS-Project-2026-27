@@ -201,8 +201,9 @@ CS-Project-2026-27/
 ├── Program.py                 # Main application, schema, menu loop, fixture generation
 ├── Modules/
 │   └── functions.py           # SQLite helpers, validation, queries, calculations, CLI helpers
-├── tournament.db              # Persistent SQLite database
+├── tournament.db              # Persistent SQLite database and sample data
 ├── README.md                  # This handoff document
+├── requirements.txt           # Python dependency declaration
 ├── .gitignore
 └── __pycache__/               # Generated Python bytecode; not source
 ```
@@ -240,7 +241,11 @@ Contains almost all business logic:
 
 #### `tournament.db`
 
-This is the live data file. Running the program against it changes the database permanently whenever a create/register/result operation succeeds.
+This is the live data file. Running the program against it changes the database permanently whenever a create/register/result operation succeeds. The repository currently contains seven tournaments, thirteen teams, twenty-five players, nine matches, and six recorded results.
+
+#### `requirements.txt`
+
+This file documents the Python dependency setup. The application currently uses only Python's standard library, so it contains no third-party packages. It is still installed during setup so future dependencies can be added without changing the onboarding process.
 
 ---
 
@@ -305,7 +310,7 @@ teams       1 ──── many matches as Teid2
 matches     1 ──── 0 or 1 result
 ```
 
-Foreign keys use `ON DELETE CASCADE` for teams, players, matches, and results where defined. However, the current connection does not explicitly enable `PRAGMA foreign_keys = ON`, so SQLite's foreign-key enforcement depends on the connection configuration. This should be enabled in `init_database()` if strict referential integrity is required.
+Foreign keys use `ON DELETE CASCADE` for teams, players, matches, and results where defined. `get_connection()` enables `PRAGMA foreign_keys = ON` for every application connection, so invalid references are rejected and deleting a tournament cascades to its related teams, players, matches, and results.
 
 ### 4.1 `tournaments`
 
@@ -414,7 +419,14 @@ Closes a connection if one was supplied. The main program currently closes the c
 
 ### `get_connection(database_path)`
 
-Returns a basic SQLite connection. It does not set the row factory, so callers using this function would receive tuple rows. It is currently not part of the main execution path.
+Creates and configures a SQLite connection. It:
+
+1. Opens the database file.
+2. Enables foreign-key enforcement with `PRAGMA foreign_keys = ON`.
+3. Sets `sqlite3.Row` so query results support named-column access.
+4. Returns the configured connection.
+
+`init_database()` uses this helper, so the main application receives both foreign-key enforcement and named row access.
 
 ---
 
@@ -468,31 +480,33 @@ Unexpected Python errors are not caught. That is useful during development becau
 
 ## `Program.py`
 
-### `generate_fixtures(conn, tournament_id)`
+### `generate_fixtures(conn, tournament_id, start_date, start_time, venue=None)`
 
-Generates one round-robin fixture for every pair of teams in a tournament.
+Generates and schedules one round-robin fixture for every pair of teams in a tournament.
 
 Flow:
 
 1. Calls `get_To()` to validate and load the tournament.
 2. Calls `lst_Te()` to load its teams.
 3. Rejects tournaments with fewer than two teams.
-4. Rejects generation if any match already exists for the tournament.
-5. Adds a `None` placeholder when the number of teams is odd, creating a bye.
-6. Rotates the participants after each round.
-7. Inserts scheduled matches using the current date and time from SQLite.
-8. Commits the transaction.
-9. Returns the created match IDs.
+4. Parses the first match date and time using `YYYY-MM-DD` and `HH:MM` formats.
+5. Rejects generation if any match already exists for the tournament.
+6. Checks that the schedule does not start before the tournament start date.
+7. Checks that the final round does not extend beyond the tournament end date.
+8. Rotates the participants after each round.
+9. Inserts scheduled matches with generated dates, times, and the optional venue.
+10. Commits the complete fixture batch as one transaction.
+11. Returns the created match IDs.
 
-For `n` teams, a single round-robin should create:
+Each round is one day after the previous round. Matches inside one round are two hours apart. For `n` teams, a single round-robin should create:
 
 ```text
 n * (n - 1) / 2
 ```
 
-matches. For four teams, that is six matches. For three teams, it is three matches, with one bye in each round.
+matches. For four teams, that is six matches. For an odd number of teams, the current implementation is intended to use a bye, but the participant rotation should be verified when changing this code.
 
-The function does not store a round number, despite internally using `round_number` in the loop. It also leaves venue as `NULL`.
+The function does not store a round number in the database.
 
 ### `run_cli(conn)`
 
@@ -536,14 +550,14 @@ Creates a tournament.
 Steps:
 
 1. Validates `name`, `sport`, and `format` with `isRequired()`.
-2. Validates status against `Scheduled`, `Ongoing`, and `Completed`.
-3. Converts empty dates to `NULL`.
-4. Inserts the row.
-5. Commits on success.
-6. Rolls back and raises `ValidationError` on an integrity failure.
-7. Returns the new tournament ID.
-
-The function does not validate date format or ensure that the end date comes after the start date.
+2. Requires the format to be `Round Robin`, case-insensitively, and stores it in normalized form.
+3. Validates status against `Scheduled`, `Ongoing`, and `Completed`.
+4. Validates optional dates as `YYYY-MM-DD`.
+5. Rejects an end date earlier than the start date.
+6. Inserts the row.
+7. Commits on success.
+8. Rolls back and raises `ValidationError` on an integrity failure.
+9. Returns the new tournament ID.
 
 ### `get_To(conn, Toid)`
 
@@ -638,13 +652,15 @@ Steps:
 1. Validates and converts the match ID.
 2. Loads the match.
 3. Rejects a missing match.
-4. Rejects a match already marked `Completed`.
+4. Allows results only when the match status is exactly `Scheduled`.
 5. Requires both scores.
 6. Converts both scores to integers.
 7. Rejects negative scores.
 8. Inserts a result using `Teid1_score` and `Teid2_score`.
 9. Marks the match `Completed`.
 10. Commits both operations as one transaction via `with conn:`.
+
+This prevents results from being entered for completed or cancelled matches.
 
 The winner is not stored. Standings determine winner/draw/loss from the scores.
 
@@ -912,19 +928,33 @@ print rows
 
 ## 9. Current seeded database
 
-The database currently contains the original test records plus a realistic seeded competition.
+The database currently contains the original test records plus several additional test and demonstration tournaments. It is not a clean empty database. New teammates should either use the existing records for exploration or make a backup before adding more data.
 
-### Overall counts
+### Current overall counts
 
-At the time this document was written:
+These counts were checked from `tournament.db` on 2026-11-24:
 
-- Tournaments: 5
-- Teams: 10
-- Players: 20
-- Matches: 8
-- Results: 5
+- Tournaments: 7
+- Teams: 13
+- Players: 25
+- Matches: 9
+- Results: 6
 
-### Seeded tournament
+### Tournament summary
+
+| ID | Tournament | Sport | Status | Teams | Players | Matches | Completed | Upcoming | Total score |
+|---:|---|---|---|---:|---:|---:|---:|---:|---:|
+| 1 | Badminten | dad | Scheduled | 1 | 2 | 0 | 0 | 0 | 0 |
+| 2 | CLI Retest Cup | Soccer | Scheduled | 2 | 1 | 1 | 0 | 1 | 0 |
+| 3 | Post Fix Cup | Tennis | Scheduled | 2 | 2 | 1 | 1 | 0 | 8 |
+| 4 | Validation Cup | Hockey | Scheduled | 1 | 0 | 0 | 0 | 0 | 0 |
+| 5 | National University Football Cup 2026 | Football | Ongoing | 4 | 16 | 6 | 4 | 2 | 11 |
+| 6 | BayDon | Bayblade | Scheduled | 1 | 0 | 0 | 0 | 0 | 0 |
+| 7 | Hackathon | Hacking | Scheduled | 2 | 4 | 1 | 1 | 0 | 19 |
+
+`Total score` is calculated as the sum of both teams' scores for recorded results. The program's `statistics()` function calculates the same value for each selected tournament.
+
+### Main seeded tournament
 
 **National University Football Cup 2026**
 
@@ -978,6 +1008,17 @@ Current standings:
 | Eastside Athletic | 2 | 0 | 2 | 0 | 2 | 2 | 0 | 2 |
 | Riverside FC | 2 | 0 | 1 | 1 | 3 | 4 | -1 | 1 |
 
+### Other demonstration data
+
+The other tournaments are retained because they were created during testing and demonstrate different states:
+
+- **CLI Retest Cup** has two teams and one scheduled match.
+- **Post Fix Cup** has one completed 4–4 draw.
+- **Validation Cup** and **BayDon** demonstrate tournaments with only one team and no fixtures.
+- **Hackathon** has two teams, four players total, and one completed 10–9 match.
+
+These records are useful for testing list, validation, match, standings, search, and statistics options. They also explain why the database totals are larger than the main football example.
+
 ---
 
 ## 10. Important current limitations and technical debt
@@ -1005,21 +1046,27 @@ There are two implementations:
 
 Keep one implementation to prevent future behavior from diverging.
 
-### 10.3 No explicit foreign-key enforcement
+### 10.3 Date and time validation is partial
 
-Add this during initialization if database-level relationship enforcement is wanted:
+Tournament start and end dates are now validated as `YYYY-MM-DD`, and the end date cannot precede the start date. Fixture generation validates the first match date and time as `YYYY-MM-DD` and `HH:MM`, and checks that the generated schedule fits inside the tournament date range.
 
-```python
-conn.execute("PRAGMA foreign_keys = ON")
-```
+The database still stores dates and times as text, and manually inserted database rows can bypass application validation.
 
-### 10.4 Dates and times are plain text
-
-The program stores date and time strings but does not validate them. A future improvement should validate ISO dates and times before insertion.
-
-### 10.5 No round number in the match table
+### 10.4 No round number in the match table
 
 The fixture algorithm has rounds, but the schema does not store a round field. This makes it impossible to display or query round numbers later.
+
+### 10.5 Fixture generation requires schedule details
+
+Option 6 asks for:
+
+```text
+First match date (YYYY-MM-DD)
+First match time (HH:MM, 24-hour)
+Venue (optional)
+```
+
+Each round is scheduled one day apart, and matches within a round are scheduled two hours apart. The application rejects duplicate fixture generation, schedules that start before the tournament start date, and schedules that extend beyond the tournament end date.
 
 ### 10.6 No team-membership validation for manually inserted matches
 
@@ -1047,17 +1094,33 @@ Players only have a name and team ID. There is no age, jersey number, position, 
 
 Several functions both collect input and perform database operations. This is convenient for a small assignment but makes automated testing harder. A future refactor should keep input/output in the CLI layer and make business functions accept already-validated values.
 
-### 10.11 The team-name update in `Program.py` is obsolete
+### 10.11 The team-name update in `Program.py` is redundant
 
-Option 3 currently calls `add_Te()` and then updates the same row's name. Since `add_Te()` now stores the correct name, the update block is redundant:
+Option 3 currently calls `add_Te()` and then updates the same row's name. Since `add_Te()` now stores the correct name, this extra update is unnecessary:
 
 ```python
 conn.execute("UPDATE teams SET name = ? WHERE Teid = ?", (team_name, team_id))
 ```
 
-It is safe to remove after confirming no old database compatibility requirement depends on it.
+It does not currently break the workflow, but it should be removed after confirming no old database compatibility requirement depends on it.
 
-### 10.12 No automated tests
+### 10.12 The CLI and fixture API must stay synchronized
+
+`generate_fixtures()` now requires `start_date`, `start_time`, and an optional `venue`, so callers must use this interface:
+
+```python
+fixtures = generate_fixtures(
+    conn,
+    tournament["Toid"],
+    start_date,
+    start_time,
+    venue,
+)
+```
+
+The CLI asks for these values in option 6. Any future caller that uses the old two-argument form will fail with a `TypeError`.
+
+### 10.13 No automated tests
 
 The project currently relies on interactive testing. At minimum, add tests for:
 
