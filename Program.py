@@ -1,6 +1,7 @@
 import sqlite3
 from typing import Any
 from Modules.functions import *
+from datetime import datetime, timedelta
 
 # ``Modules.functions`` imports Schema, so define the schema before importing it.
 Schema = """
@@ -59,37 +60,87 @@ CREATE INDEX IF NOT EXISTS idx_Te_id ON teams (Teid);
 CREATE INDEX IF NOT EXISTS idx_P_id ON players (Pid);
 CREATE INDEX IF NOT EXISTS idx_TO_id ON matches (Toid, Status);
 """
-def generate_fixtures(conn: sqlite3.Connection, tournament_id: Any) -> list[int]:
-    """Generate one round-robin fixture for every pair of teams."""
+
+def generate_fixtures(conn, tournament_id, start_date, start_time, venue=None):
+    """Generate and schedule round-robin fixtures."""
+
     tournament = get_To(conn, tournament_id)
     teams = lst_Te(conn, tournament["Toid"])
+
     if len(teams) < 2:
-        raise ValidationError("At least two teams are required to generate fixtures.")
-    if conn.execute(
-        "SELECT 1 FROM matches WHERE Toid = ? LIMIT 1", (tournament["Toid"],)
-    ).fetchone():
-        raise ValidationError("Fixtures already exist for this tournament.")
+        raise ValidationError("At least two teams are required.")
+
+    # Validate the starting date and time
+    try:
+        start_at = datetime.strptime(
+            f"{start_date} {start_time}",
+            "%Y-%m-%d %H:%M"
+        )
+    except ValueError as exc:
+        raise ValidationError(
+            "Enter date as YYYY-MM-DD and time as HH:MM."
+        ) from exc
+
+    # Prevent duplicate fixture generation
+    existing = conn.execute(
+        "SELECT 1 FROM matches WHERE Toid = ? LIMIT 1",
+        (tournament["Toid"],)
+    ).fetchone()
+
+    if existing:
+        raise ValidationError("Fixtures already exist.")
 
     participants = list(teams)
+
+    # Add a bye for an odd number of teams
     if len(participants) % 2:
         participants.append(None)
 
-    created: list[int] = []
-    for round_number in range(1, len(participants)):
-        for index in range(len(participants) // 2):
-            first = participants[index]
-            second = participants[-index - 1]
-            if first is None or second is None:
-                continue
-            cursor = conn.execute(
-                """INSERT INTO matches
-                   (Toid, Teid1, Teid2, Mdate, Mtime, Venue, Status)
-                   VALUES (?, ?, ?, DATE('now'), TIME('now'), NULL, 'Scheduled')""",
-                (tournament["Toid"], first["Teid"], second["Teid"]),
+    created = []
+
+    with conn:
+        for round_number in range(1, len(participants)):
+
+            for index in range(len(participants) // 2):
+
+                first = participants[index]
+                second = participants[-index - 1]
+
+                if first is None or second is None:
+                    continue
+
+                # Each round is on a different day.
+                # Matches within a round are two hours apart.
+                match_at = start_at + timedelta(
+                    days=round_number - 1,
+                    hours=index * 2
+                )
+
+                cursor = conn.execute(
+                    """
+                    INSERT INTO matches
+                    (Toid, Teid1, Teid2, Mdate, Mtime, Venue, Status)
+                    VALUES (?, ?, ?, ?, ?, ?, 'Scheduled')
+                    """,
+                    (
+                        tournament["Toid"],
+                        first["Teid"],
+                        second["Teid"],
+                        match_at.strftime("%Y-%m-%d"),
+                        match_at.strftime("%H:%M:%S"),
+                        venue
+                    )
+                )
+
+                created.append(int(cursor.lastrowid))
+
+            # Rotate teams for the next round
+            participants = (
+                [participants[0]] +
+                [participants[-1]] +
+                participants[1:-1]
             )
-            created.append(int(cursor.lastrowid))
-        participants = [participants[0]] + [participants[-1]] + participants[1:-1]
-    conn.commit()
+
     return created
 
 
@@ -140,10 +191,33 @@ def run_cli(conn: sqlite3.Connection) -> None:
                         lst_P(conn, None, tournament["Toid"]),
                         [("Pid", "ID"), ("name", "Player"), ("Tname", "Team")],
                     )
+            
             elif choice == "6":
                 tournament = choose_tournament(conn)
+
                 if tournament:
-                    print(f"Created {len(generate_fixtures(conn, tournament['Toid']))} fixtures.")
+                    start_date = input(
+                     "First match date (YYYY-MM-DD): "
+                    ).strip()
+
+                start_time = input(
+                    "First match time (HH:MM, 24-hour): "
+                ).strip()
+
+                venue = input(
+                    "Venue (optional): "
+                ).strip() or None
+
+                fixtures = generate_fixtures(
+                    conn,
+                    tournament["Toid"],
+                    start_date,
+                    start_time,
+                    venue
+                )
+
+                print(f"Created {len(fixtures)} fixtures.")
+
             elif choice == "7":
                 tournament = choose_tournament(conn)
                 if tournament:
@@ -186,12 +260,29 @@ def run_cli(conn: sqlite3.Connection) -> None:
                 print_rows(results["teams"], [("name", "Team"), ("tournament_name", "Tournament")])
                 print("Players:")
                 print_rows(results["players"], [("name", "Player"), ("team_name", "Team"), ("tournament_name", "Tournament")])
+            
             elif choice == "11":
                 tournament = choose_tournament(conn)
+
                 if tournament:
-                    print(statistics(conn, tournament["Toid"]))
-            else:
-                print("Please choose a valid menu option.")
+                    stats = statistics(conn, tournament["Toid"])
+
+                    print("\n" + "=" * 35)
+                    print("       TOURNAMENT STATISTICS")
+                    print("=" * 35)
+
+                    print(f"Tournament       : {tournament['name']}")
+                    print(f"Teams Registered : {stats['teams']}")
+                    print(f"Players Registered: {stats['players']}")
+                    print(f"Total Matches    : {stats['matches']}")
+                    print(f"Completed Matches: {stats['completed']}")
+                    print(f"Upcoming Matches : {stats['upcoming']}")
+                    print(f"Total Score      : {stats['total_score']}")
+
+                    print("=" * 35)
+
+                else:
+                    print("Please choose a valid menu option.")
         except ValidationError as exc:
             print(f"Error: {exc}")
         except sqlite3.IntegrityError as exc:

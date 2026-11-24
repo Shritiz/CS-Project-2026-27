@@ -1,12 +1,13 @@
+from re import match
 import sqlite3
 from pathlib import Path
 
-from Program import Schema
 
 class ValidationError(Exception): #Custom Error
     pass
 def init_database(schema, database_path: str): #connect database to the program
     conn = sqlite3.connect(database_path)
+    conn.execute("PRAGMA foreign_keys = ON")
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     cursor.executescript(schema)
@@ -30,6 +31,13 @@ def Create_To(conn: sqlite3.Connection, name: str,sport: str,format:str, status:
     name = isRequired(conn, name, "Tournament Name")
     sport = isRequired(conn, sport, "Sport")
     format = isRequired(conn, format, "Format")
+
+    if format.strip().casefold() != "round robin":
+        raise ValidationError(
+            "Currently, only Round Robin format is supported."
+        )
+
+    format = "Round Robin"
     if status not in ['Scheduled', 'Ongoing', 'Completed']:
         raise ValidationError("Invalid status. Must be 'Scheduled', 'Ongoing', or 'Completed'.")
 
@@ -150,30 +158,6 @@ def lst_M(conn: sqlite3.Connection, Toid: int,status: str): #list matches
     return cursor.fetchall()
 
 
-def gen_round_robin(conn: sqlite3.Connection, Toid: int): #default fixture
-    teams = lst_Te(conn, Toid)
-
-    if len(teams) < 2:
-        raise ValidationError("At least two teams are required.")
-
-    # Check if fixtures already exist
-    existing = conn.execute(
-        "SELECT 1 FROM matches WHERE Toid = ?", (Toid,)
-    ).fetchone()
-
-    if existing:
-        raise ValidationError("Fixtures already exist.")
-
-    # Generate matches
-    for i in range(len(teams)):
-        for j in range(i + 1, len(teams)):
-            conn.execute("""
-                INSERT INTO matches (Toid, Teid1, Teid2, Mdate, Mtime, Status)
-                VALUES (?, ?, ?, DATE('now'), TIME('now'), 'Scheduled')
-            """, (Toid, teams[i]["Teid"], teams[j]["Teid"]))
-
-    conn.commit()
-
 def rec_r(conn: sqlite3.Connection, Mid: int, t1_score, t2_score): #record the results isn't that obv
     Mid = isRequired(conn, Mid, "Match ID")
     try:
@@ -186,8 +170,11 @@ def rec_r(conn: sqlite3.Connection, Mid: int, t1_score, t2_score): #record the r
     match = cursor.fetchone()
     if match is None:
         raise ValidationError(f"Match with ID {Mid} not found.")
-    if match['Status'] == 'Completed':
-        raise ValidationError(f"Match with ID {Mid} had been concluded .")
+
+    if match["Status"] != "Scheduled":
+        raise ValidationError(
+        f"Cannot enter result. Match status is {match['Status']}."
+        )
     t1_score = isRequired(conn, t1_score, "Team 1 Score")
     t2_score = isRequired(conn, t2_score, "Team 2 Score")
     try:
@@ -320,7 +307,7 @@ def print_rows(rows, columns):
         print("No records found.")
         return
     headings = " | ".join(title for _, title in columns)
-    print("\\n" + headings)
+    print("\n" + headings)
     print("-" * (len(headings) + 2))
     for row in rows:
         print(" | ".join(
